@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laboratório de Eletrostática</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            text-align: center;
+            background: #0f172a;
+            color: white;
+            margin: 0;
+            padding-bottom: 50px; /* Espaço para rolar até o fim */
+            overflow-y: auto;    /* Garante a rolagem vertical */
+        }
+
+        h1 { margin-top: 20px; font-weight: 600; font-size: 1.8rem; }
+
+        #controls { 
+            margin: 15px auto; 
+            max-width: 900px;
+        }
+
+        button {
+            padding: 10px 16px;
+            margin: 5px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            background: #2563eb;
+            color: white;
+            transition: 0.2s;
+        }
+
+        button:hover { background: #1d4ed8; }
+        .active { background: #22c55e !important; }
+
+        canvas {
+            background: #020617;
+            border: 2px solid #334155;
+            border-radius: 8px;
+            box-shadow: 0px 0px 20px rgba(0,0,0,0.6);
+            max-width: 95%;
+            height: auto;
+            cursor: crosshair;
+        }
+
+        /* Container do QR Code Ajustado Simetricamente */
+        #qrcode-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 12px;
+            border-radius: 12px;
+            color: black;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+            
+            /* Centralização interna */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #qrcode-container img {
+            width: 90px;
+            height: 90px;
+            display: block;
+            margin: 0 auto 8px auto; /* Margem simétrica */
+        }
+
+        #qrcode-container span {
+            font-size: 9px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            color: #1e293b;
+        }
+
+        @media (max-width: 768px) {
+            #qrcode-container { display: none; } /* Oculta em telas pequenas para não cobrir o canvas */
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Laboratório de Eletrostática</h1>
+
+    <div id="controls">
+        <button onclick="addCharge(1)">Carga +</button>
+        <button onclick="addCharge(-1)">Carga -</button>
+        <button onclick="clearCharges()">Limpar</button>
+        <br>
+        <button id="forceBtn" class="active" onclick="setMode('force')">Mostrar Força</button>
+        <button id="fieldBtn" onclick="setMode('field')">Mostrar Campo</button>
+        <button id="distanceBtn" onclick="toggleDistance()">Mostrar Distância</button>
+    </div>
+
+    <canvas id="canvas" width="900" height="500"></canvas>
+
+    <div id="qrcode-container">
+        <img id="qr-img" src="" alt="QR Code">
+        <span>ACESSE NO CELULAR</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+
+        let charges = [];
+        let dragging = null;
+        let mode = "force";
+        let showDistance = false;
+
+        const k = 9e9;
+        const scaleField = 1500;
+
+        // Gerar QR Code baseado na URL (Hospede no GitHub para funcionar)
+        window.onload = () => {
+            const currentUrl = window.location.href;
+            // Se estiver rodando localmente (file://), o QR code apontará para o Google apenas como teste
+            const qrData = currentUrl.startsWith('http') ? currentUrl : "https://github.com";
+            document.getElementById("qr-img").src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrData)}`;
+        };
+
+        const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
+
+        class Charge {
+            constructor(x, y, q) {
+                this.x = x;
+                this.y = y;
+                this.q = q;
+            }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 14, 0, Math.PI * 2);
+                ctx.fillStyle = this.q > 0 ? "#ef4444" : "#3b82f6";
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.font = "bold 16px Arial";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(this.q > 0 ? "+" : "-", this.x, this.y);
+            }
+        }
+
+        function addCharge(sign) {
+            let q = sign * 2e-6;
+            let x = 150 + Math.random() * 600;
+            let y = 150 + Math.random() * 200;
+            charges.push(new Charge(x, y, q));
+        }
+
+        function clearCharges() { charges = []; }
+
+        function setMode(m) {
+            mode = m;
+            document.getElementById("forceBtn").classList.toggle("active", m === "force");
+            document.getElementById("fieldBtn").classList.toggle("active", m === "field");
+        }
+
+        function toggleDistance() {
+            showDistance = !showDistance;
+            document.getElementById("distanceBtn").classList.toggle("active", showDistance);
+        }
+
+        function drawForceVectors() {
+            for (let i = 0; i < charges.length; i++) {
+                let fx = 0, fy = 0;
+                for (let j = 0; j < charges.length; j++) {
+                    if (i === j) continue;
+                    let dx = charges[j].x - charges[i].x;
+                    let dy = charges[j].y - charges[i].y;
+                    let r = Math.sqrt(dx * dx + dy * dy);
+                    if (r < 30) r = 30;
+                    let F = k * Math.abs(charges[i].q * charges[j].q) / (r * r);
+                    let dir = (charges[i].q * charges[j].q > 0) ? -1 : 1;
+                    fx += dir * F * (dx / r);
+                    fy += dir * F * (dy / r);
+                }
+                let magnitude = Math.sqrt(fx * fx + fy * fy);
+                if (magnitude > 0) {
+                    let scale = 120000000;
+                    let length = clamp(magnitude * scale, 15, 150);
+                    let angle = Math.atan2(fy, fx);
+                    drawForceArrow(charges[i].x, charges[i].y, Math.cos(angle) * length, Math.sin(angle) * length);
+                }
+            }
+        }
+
+        function drawElectricField() {
+            let step = 60;
+            for (let x = step / 2; x < canvas.width; x += step) {
+                for (let y = step / 2; y < canvas.height; y += step) {
+                    let ex = 0, ey = 0;
+                    for (let c of charges) {
+                        let dx = x - c.x, dy = y - c.y;
+                        let r = Math.sqrt(dx * dx + dy * dy);
+                        if (r < 25) r = 25;
+                        let E = k * Math.abs(c.q) / (r * r);
+                        let dir = c.q > 0 ? 1 : -1;
+                        ex += dir * E * (dx / r);
+                        ey += dir * E * (dy / r);
+                    }
+                    drawArrow(x, y, ex * scaleField, ey * scaleField, "#38bdf8");
+                }
+            }
+        }
+
+        function drawArrow(x, y, vx, vy, color) {
+            let magnitude = Math.sqrt(vx * vx + vy * vy);
+            if (magnitude < 0.001) return;
+            let length = clamp(magnitude * 0.02, 5, 40);
+            let dx = vx / magnitude, dy = vy / magnitude;
+            let endX = x + dx * length, endY = y + dy * length;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(endX, endY);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            let angle = Math.atan2(dy, dx);
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(endX - 5 * Math.cos(angle - Math.PI / 6), endY - 5 * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(endX - 5 * Math.cos(angle + Math.PI / 6), endY - 5 * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        function drawForceArrow(x, y, vx, vy) {
+            let mag = Math.sqrt(vx * vx + vy * vy);
+            let dx = vx / mag, dy = vy / mag;
+            let startX = x + dx * 22, startY = y + dy * 22;
+            let endX = startX + vx, endY = startY + vy;
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY);
+            ctx.strokeStyle = "#22c55e";
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            let angle = Math.atan2(vy, vx);
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(endX - 12 * Math.cos(angle - Math.PI / 6), endY - 12 * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(endX - 12 * Math.cos(angle + Math.PI / 6), endY - 12 * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fillStyle = "#22c55e";
+            ctx.fill();
+        }
+
+        function drawDistances() {
+            if (charges.length < 2) return;
+            for (let i = 0; i < charges.length; i++) {
+                for (let j = i + 1; j < charges.length; j++) {
+                    let dx = charges[j].x - charges[i].x;
+                    let dy = charges[j].y - charges[i].y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    ctx.setLineDash([6, 6]);
+                    ctx.beginPath();
+                    ctx.moveTo(charges[i].x, charges[i].y);
+                    ctx.lineTo(charges[j].x, charges[j].y);
+                    ctx.strokeStyle = "#facc15";
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    let meters = (dist / 100).toFixed(2);
+                    ctx.fillStyle = "#facc15";
+                    ctx.font = "bold 14px Arial";
+                    ctx.fillText(meters + " m", (charges[i].x + charges[j].x) / 2 + 5, (charges[i].y + charges[j].y) / 2 - 5);
+                }
+            }
+        }
+
+        // Funções de interação (Mouse e Touch)
+        function getMousePos(evt) {
+            let rect = canvas.getBoundingClientRect();
+            return {
+                x: (evt.clientX || evt.touches[0].clientX) - rect.left,
+                y: (evt.clientY || evt.touches[0].clientY) - rect.top
+            };
+        }
+
+        function startDragging(e) {
+            let pos = getMousePos(e);
+            for (let c of charges) {
+                if (Math.hypot(pos.x - c.x, pos.y - c.y) < 25) {
+                    dragging = c;
+                    break;
+                }
+            }
+        }
+
+        function doDragging(e) {
+            if (dragging) {
+                let pos = getMousePos(e);
+                dragging.x = pos.x;
+                dragging.y = pos.y;
+                e.preventDefault(); // Impede scroll enquanto arrasta a carga
+            }
+        }
+
+        canvas.addEventListener("mousedown", startDragging);
+        canvas.addEventListener("mousemove", doDragging);
+        canvas.addEventListener("mouseup", () => dragging = null);
+        canvas.addEventListener("touchstart", startDragging);
+        canvas.addEventListener("touchmove", doDragging);
+        canvas.addEventListener("touchend", () => dragging = null);
+
+        function update() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (mode === "field") drawElectricField();
+            if (showDistance) drawDistances();
+            for (let c of charges) c.draw();
+            if (mode === "force") drawForceVectors();
+            requestAnimationFrame(update);
+        }
+        update();
+    </script>
+</body>
+</html>
